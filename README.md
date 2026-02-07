@@ -38,11 +38,7 @@ Assembly
 
 2. Flash the pico with micropython: [official documentation](https://www.raspberrypi.com/documentation/microcontrollers/micropython.html).
 
-3. Load the appropiate file:
-    * `main_pico.py` file for the __raspbery pico__.
-    * `main_tiny2040.py` file for the __tiny2040__.
-
-4. Rename to `main.py` for automatic execution.
+3. Load `main.py` onto the board. It auto-detects the board type (Raspberry Pi Pico, Pico W, or Pimoroni Tiny 2040) and configures pins accordingly.
 
 
 Use
@@ -60,7 +56,7 @@ Here an example of a portable implementation using a Tiny2040.
 Note
 ---
 
-The script blinks the led of the pico automatically. If you are using a __Raspberry pico W__ change the Pin defnition accordignly ([link](https://forums.raspberrypi.com/viewtopic.php?t=336836)).
+The script blinks the LED of the board automatically. Pico W is supported and requires MicroPython >= 1.19.1.
 
 Results
 ===
@@ -77,17 +73,12 @@ Once we adjust the min and max power values, we can add an amplitude plot and ch
 
     101010101010101010101010100010101100101100110010110011001100110011001011010011010010110101001010110100110100110010101011010010110001010110010110011001011001100110011001100101101001101001011010100101011010011010011001010101101001011000101011001011001100101100110011001100110010110100110100101101010010101101001101001100101010110100101
 
-Adjustments
+Timing
 ===
 
-The transmitted signal should have a symbol period of 400us. This is indicated with micropython's call `sleep_us(400)`. However, thats the time the sleep call will wait, we need to account too for the time it takes to execute the rest of the code. I was getting pulses of 416us so I just compensated for them. Seems little but it's a huge difference after the 333 symbols of the signal, and it was not able to open the charging ports.
+The transmitted signal has a symbol period of 400us. The code uses the RP2040's PIO (Programmable I/O) state machine to output bits at exactly 2500 Hz, giving deterministic 400us symbol timing independent of Python execution overhead. No manual tuning is needed.
+
+Earlier versions used `sleep_us()` which required a manual compensation factor due to Python overhead, resulting in timing drift over the 333-symbol signal. The PIO approach eliminates this entirely.
 
 ![Samples too long](docs/samples_delayed.png)
-
-Therefore, I changed the call to `sleep_us(384)` and it fixed the issue.
-
-![Samples too long](docs/samples_corrected.png)
-
-You may need to play a bit with this parameter to make it work if you change the code `¯\_(ツ)_/¯`.
-
-Better solutions could be implemented, like using the PIO framework. Maybe I'll do it in the future.
+![Samples corrected](docs/samples_corrected.png)
