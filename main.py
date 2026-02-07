@@ -3,6 +3,7 @@
 #
 # Tesla charging port opener using RP2040 PIO for deterministic timing.
 # Auto-detects board: Raspberry Pi Pico, Pico W, or Pimoroni Tiny 2040.
+# Note: Pico W requires MicroPython >= 1.19.1 for Pin('LED') support.
 
 import os
 import rp2
@@ -16,7 +17,6 @@ _is_tiny = 'Tiny 2040' in _board
 if _is_tiny:
     DATA_PIN = 29
     red = Pin(18, Pin.OUT, value=1)    # Active-low: value=1 is OFF
-    green = Pin(19, Pin.OUT, value=1)
     blue = Pin(20, Pin.OUT, value=1)
 else:
     DATA_PIN = 0
@@ -27,16 +27,24 @@ del _board
 # Tesla charging port ASK/OOK signal: 333 symbols at 2.5 kHz (400 us/symbol)
 _signal = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1]
 
-# Pack into 32-bit words for PIO (LSB-first shift order)
-signal_words = []
-for _i in range(0, len(_signal), 32):
-    _w = 0
-    for _j, _b in enumerate(_signal[_i:_i + 32]):
-        _w |= _b << _j
-    signal_words.append(_w)
+# Pack all repetitions as a continuous bitstream with exact 5-symbol gaps
+REPEAT = 10
+_GAP = 5
+_rep_bits = len(_signal) + _GAP
+_full = []
+for _ in range(REPEAT):
+    _full.extend(_signal)
+    _full.extend([0] * _GAP)
 del _signal
 
-REPEAT = 10
+# Pack into 32-bit words for PIO (LSB-first shift order)
+signal_words = []
+for _i in range(0, len(_full), 32):
+    _w = 0
+    for _j, _b in enumerate(_full[_i:_i + 32]):
+        _w |= _b << _j
+    signal_words.append(_w)
+del _full, _GAP, _i, _w, _j, _b
 
 # --- PIO program: output one bit per cycle ---
 @rp2.asm_pio(out_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_RIGHT,
@@ -50,14 +58,17 @@ sm.active(1)
 
 # --- Main loop ---
 while True:
-    for _r in range(REPEAT):
-        for w in signal_words:
-            sm.put(w)
-        # Zero-padding in last word provides inter-repetition gap
-        if _is_tiny:
-            red.toggle()
-        else:
-            led.toggle()
+    _next = _rep_bits
+    _count = 0
+    for w in signal_words:
+        sm.put(w)
+        _count += 32
+        if _count >= _next:
+            _next += _rep_bits
+            if _is_tiny:
+                red.toggle()
+            else:
+                led.toggle()
 
     sm.put(0)  # Ensure output returns to low
 
